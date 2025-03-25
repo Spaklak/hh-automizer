@@ -1,0 +1,22 @@
+# из личного кабинета разработчика hh.ru
+client_id: ''
+redirect_uri: ''
+state_value: '' # можно указать любое, значения не имеет
+client_secret: ''
+
+# получается из ноутбука get_resume_id только 1 раз
+resume_id: ''
+
+# получается из ноутбука get_all_codes каждый час
+access_token: ''
+
+# experience - фильтр "требуемый опыт работы" с hh.ru
+# mark - от какой оценки считать вакансию подходящей
+# number_of_responses - количество нужных отлкиков
+criterion:
+  experience: ['Нет опыта', 'От 1 года до 3 лет']
+  number_of_responses: 1
+  mark: 7
+
+# api ключ для модели GigaChat из личного кабинета разработчика
+giga_chat_api: ''
