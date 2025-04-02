@@ -185,7 +185,7 @@ class HHAutomizer:
                 return OK
             else:
                 return BAD
-        except ValueError:
+        except:
             return ERROR
 
     def create_cover_letter(self, vac_name, vac_describe) -> str:
@@ -229,7 +229,7 @@ class HHAutomizer:
         self.sum_tokens += response.response_metadata["token_usage"].total_tokens
         return response.content
 
-    def apply_to_vacancy(self, vacancy_id: str, cover_letter: str):
+    def apply_to_vacancy(self, vacancy_id: str, cover_letter: str) -> None:
         url = "https://api.hh.ru/negotiations"
         headers = {
             "Authorization": f"Bearer {self._config['access_token']}",
@@ -253,7 +253,7 @@ class HHAutomizer:
         except requests.exceptions.RequestException as e:
             print(f"Ошибка отправки отлика на вакансию {vacancy_id}: {e}")
 
-    def make_responses(self):
+    def make_responses(self) -> None:
         if self.resume_summary is None:
             raise ValueError("Резюме отсутвует. Невозможно начать делать отклики")
 
