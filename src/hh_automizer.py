@@ -6,6 +6,8 @@ from bs4 import BeautifulSoup
 import time
 
 from langchain_community.chat_models import GigaChat
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 import warnings
 
@@ -32,6 +34,11 @@ class HHAutomizer:
 
     @classmethod
     def get_resumes(clf) -> dict:
+        """Получает все резюме, которые связаны с пользователем API.
+        
+        Returns:
+            dict: словарь со всеми резюме пользователя
+        """
         url = "https://api.hh.ru/resumes/mine"
         headers = {"Authorization": f"Bearer {clf._config['access_token']}"}
 
@@ -54,6 +61,11 @@ class HHAutomizer:
 
     @classmethod
     def get_resume_details(clf) -> dict:
+        """Получает детали резюме пользователя API.
+        
+        Returns:
+            dict: словарь, где в ключах указаны различные детали. К примеру, готовность к переезду, локация и т.п.
+        """
         url = f"https://api.hh.ru/resumes/{clf._config['resume_id']}"
         headers = {"Authorization": f"Bearer {clf._config['access_token']}"}
         try:
@@ -67,6 +79,15 @@ class HHAutomizer:
 
     @classmethod
     def get_similar_vacancies(clf, page: int, per_page: int) -> dict:
+        """Получает список с вакансиями с учетом пагинации
+            
+        Args:
+            page (int): страница, с которой берутся вакансии
+            per_page (int): количество вакансий, которые будут браться со страницы
+        
+        Returns:
+            dict: словарь с вакансиями 
+        """
         url = f"https://api.hh.ru/resumes/{clf._config['resume_id']}/similar_vacancies?page={page}&per_page={per_page}"
         headers = {"Authorization": f"Bearer {clf._config['access_token']}"}
         try:
@@ -80,6 +101,14 @@ class HHAutomizer:
 
     @staticmethod
     def get_vacancy_details(vacancy_id: str) -> dict:
+        """Получает детали вакансии по её id.
+
+        Args:
+            vacancy_id (int): id вакансии
+
+        Returns:
+            dict: словарь, где в ключах указаны различные детали. К примеру, готовность к переезду, локация и т.п. 
+        """
         url = f"https://api.hh.ru/vacancies/{vacancy_id}"
 
         try:
@@ -92,6 +121,7 @@ class HHAutomizer:
             return None
 
     def set_resume_summary(self) -> None:
+        """Устанавливает краткое описание резюме кандидата, выделяя главные особенности из его опыта."""
         if self.resume_summary is None:
             resume = self.get_resume_details()
             experience_descriptions = []
@@ -117,35 +147,45 @@ class HHAutomizer:
                 f"Навыки:\n{skills}\n\n"
                 f"Набор навыков:\n{skill_set_info}"
             )
-            user_prompt = """Выдели главные особеннности, которые помогли бы помочь при при подборе вакансии. В ответе дай только особенности, которые ты выделил в тексте.
-            Текст:
-            ====================
-            {resume_description}
-            ====================
-            """.format(
-                resume_description=resume_description
-            )
-            system_prompt = "Ты — Олег, русскоязычный автоматический ассистент. Ты разговариваешь с людьми и помогаешь им. Отвечай только строго по контексту."
+            prompt = PromptTemplate.from_template(
+                template="""
+                Ты - HR с многолетним стажем. Твоя задача - пропихнуть кандидата в лучшие компании мира.
 
-            chat = GigaChat(
+
+                Ты получаешь резюме по опыту работы от человека. Тебе его надо суммаризировать, выделив те особенности, которые смогут порозить других HR
+                и они незамедлительно захотят пригласить кандидата на следующий этап
+
+                Резюме: {resume_description}
+
+                ## Дополнительные требования
+                - Если нужно как-то преукрасить резюме, добавив другие технологии - сделай это
+                - В ответе тебе нужно выдать только готовый вариант резюме, который поразит других HR
+                """
+            )
+            output_parser = StrOutputParser()
+            model = GigaChat(
                 credentials=self._config["giga_chat_api"],
                 scope="GIGACHAT_API_PERS",
                 verify_ssl_certs=False,
                 profanity=True,
                 timeout=600,
             )
-
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
-            response = chat.invoke(messages)
+            chat = prompt | model | output_parser
+            response = chat.invoke({"resume_description": resume_description})
 
             self.resume_summary = response.content.replace("\n", "")
             with open("resume_summary.txt", "w", encoding="utf-8") as file:
                 file.write(response.content)
 
     def get_mark_resume_vac(self, vac_describe: str) -> int:
+        """Производит оценку между резюме и вакансией.
+
+        Args:
+            vac_describe (str): текстовое описание вакансии
+        
+        Returns:
+            int: оценка между резюме и вакансией
+        """
         if self.resume_summary is None:
             raise ValueError("Резюме отсутвует. Невозможно оценить его с вакансией")
 
@@ -188,7 +228,16 @@ class HHAutomizer:
         except:
             return ERROR
 
-    def create_cover_letter(self, vac_name, vac_describe) -> str:
+    def create_cover_letter(self, vac_name: str, vac_description: str) -> str:
+        """Создает сопроводиельное письмо.
+        
+        Args:
+            vac_name (str): название вакансии
+            vac_describe (str): описание вакансии
+        
+        Returns:
+            str: готовое сопроводительное письмо
+        """
         chat = GigaChat(
             credentials=self._config["giga_chat_api"],
             scope="GIGACHAT_API_PERS",
@@ -215,9 +264,9 @@ class HHAutomizer:
         Иван
         Текст вакансии:
         =========================
-        {vacancy_descr}
+        {vacancy_description}
         """.format(
-            vacancy_name=vac_name, vacancy_descr=vac_describe
+            vacancy_name=vac_name, vacancy_description=vac_description
         )
 
         system_prompt = "Ты — Олег, русскоязычный автоматический ассистент. Ты разговариваешь с людьми и помогаешь им. Отвечай только строго по контексту."
@@ -230,6 +279,12 @@ class HHAutomizer:
         return response.content
 
     def apply_to_vacancy(self, vacancy_id: str, cover_letter: str) -> None:
+        """Отправляет отклик на вакансию.
+        
+        Args:
+            vacancy_id (str): id вакансии
+            cover_letter (str): сопроводительное письмо
+        """
         url = "https://api.hh.ru/negotiations"
         headers = {
             "Authorization": f"Bearer {self._config['access_token']}",
@@ -254,6 +309,7 @@ class HHAutomizer:
             print(f"Ошибка отправки отлика на вакансию {vacancy_id}: {e}")
 
     def make_responses(self) -> None:
+        """Главный метод, который инициализирует цикл откликов"""
         if self.resume_summary is None:
             raise ValueError("Резюме отсутвует. Невозможно начать делать отклики")
 
