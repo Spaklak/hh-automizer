@@ -5,9 +5,9 @@ from bs4 import BeautifulSoup
 
 import time
 
-from langchain_community.chat_models import GigaChat
+from langchain_gigachat.chat_models import GigaChat
 from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from pydantic import BaseModel, Field
 
 import warnings
 
@@ -23,11 +23,16 @@ ERROR = 2
 OK = 1
 BAD = 0
 
+class ResumeSummary(BaseModel):
+    """Модель валидации для краткого содержания резюме"""
+    summary: str = Field(description="Привлекательное и яркое описание опыта кандидата")
+
 
 class HHAutomizer:
     _config = get_config()
 
-    def __init__(self, resume_summary=None) -> None:
+    def __init__(self, resume_summary: str=None) -> None:
+        self.delete_this = None
         self.resume_summary = resume_summary
         self.count_page = 0
         self.sum_tokens = 0
@@ -149,33 +154,65 @@ class HHAutomizer:
             )
             prompt = PromptTemplate.from_template(
                 template="""
-                Ты - HR с многолетним стажем. Твоя задача - пропихнуть кандидата в лучшие компании мира.
+                # РОЛЬ
+                Ты — опытный IT-рекрутер. Твоя задача — провести детальный анализ резюме и составить структурированную выжимку для нанимающего менеджера.
 
+                # КОНТЕКСТ
+                Мне нужна выжимка из резюме, которая поможет быстро оценить профессиональный уровень кандидата, его технические навыки и реальные достижения. Вся информация должна быть извлечена строго из предоставленного текста. Не додумывай и не делай предположений.
 
-                Ты получаешь резюме по опыту работы от человека. Тебе его надо суммаризировать, выделив те особенности, которые смогут порозить других HR
-                и они незамедлительно захотят пригласить кандидата на следующий этап
+                # ИНСТРУКЦИЯ
+                Проанализируй текст резюме ниже и представь результат в формате Markdown, используя следующую структуру:
 
-                Резюме: {resume_description}
+                **Резюме для анализа:**
+                {resume_description}
+                ---
 
-                ## Дополнительные требования
-                - Если нужно как-то преукрасить резюме, добавив другие технологии - сделай это
-                - В ответе тебе нужно выдать только готовый вариант резюме, который поразит других HR
+                **АНАЛИЗ РЕЗЮМЕ**
+
+                **1. Саммари (Executive Summary):**
+                -   Сформулируй краткую сводку (2-4 предложения), отвечающую на вопросы: "Кто этот кандидат?", "Какой у него ключевой опыт?" и "На какие роли он может подойти?".
+
+                **2. Опыт работы (с акцентом на достижения):**
+                -   Для каждого места работы укажи:
+                    -   **Компания:** Название компании
+                    -   **Должность:** Название должности
+                    -   **Период:** Даты работы
+                    -   **Ключевые достижения и обязанности:** Выдели 2-3 самых важных пункта. Сфокусируйся на измеримых результатах (например, "увеличил производительность на 20%", "сократил время ответа сервера на 300 мс", "разработал и внедрил систему X").
+
+                **3. Технические навыки (Hard Skills):**
+                -   **Языки программирования:**
+                -   **Фреймворки и библиотеки:**
+                -   **Базы данных:**
+                -   **Инструменты и технологии:** [CI/CD, Docker, Kubernetes, Облачные сервисы (AWS, GCP) и т.д.]
+                -   **Методологии:** [Agile, Scrum, Kanban]
+
+                **4. Мягкие навыки (Soft Skills):**
+                -   На основе описания опыта определи и перечисли ключевые мягкие навыки (например, командная работа, менторство, решение проблем, коммуникация с бизнесом, проактивность).
+
+                **6. Образование и сертификации:**
+                *   **Образование:** [Университет, специальность, год окончания]
+                *   **Сертификаты и курсы:** [Название сертификата/курса, год получения]
                 """
             )
-            output_parser = StrOutputParser()
             model = GigaChat(
                 credentials=self._config["giga_chat_api"],
                 scope="GIGACHAT_API_PERS",
                 verify_ssl_certs=False,
-                profanity=True,
                 timeout=600,
             )
-            chat = prompt | model | output_parser
-            response = chat.invoke({"resume_description": resume_description})
-
-            self.resume_summary = response.content.replace("\n", "")
-            with open("resume_summary.txt", "w", encoding="utf-8") as file:
-                file.write(response.content)
+            structured_llm = model.with_structured_output(ResumeSummary)
+            chain = prompt | structured_llm
+            try:
+                response: ResumeSummary = chain.invoke({"resume_description": resume_description})
+                self.delete_this = response
+                summary_text = f"Краткое содержание:\n{response.summary}\n"
+                self.resume_summary = summary_text
+                with open("resume_summary.txt", "w", encoding="utf-8") as file:
+                    file.write(summary_text)
+            
+            except Exception as e:
+                print(f"Не удалось сгенерировать краткое содержание резюме: {e}")
+                self.resume_summary = None
 
     def get_mark_resume_vac(self, vac_describe: str) -> int:
         """Производит оценку между резюме и вакансией.
