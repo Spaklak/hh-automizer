@@ -6,8 +6,10 @@ from bs4 import BeautifulSoup
 import time
 
 from langchain_gigachat.chat_models import GigaChat
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel, Field
+from typing import List
 
 import warnings
 
@@ -24,18 +26,50 @@ OK = 1
 BAD = 0
 
 class ResumeSummary(BaseModel):
-    """Модель валидации для краткого содержания резюме"""
-    summary: str = Field(description="Привлекательное и яркое описание опыта кандидата")
+    """Модель валидации для подробного анализа резюме."""
+    candidate_experience: str = Field(
+        description="Подробное описание профессионального опыта кандидата в 2-4 предложениях. Опиши его ключевые роли и обязанности."
+    )
+    work_experience: List[str] = Field(
+        description="Подробное описание каждого места работы с акцентом на достижения, должность и используемые технологии"
+    )
+    tech_stack: List[str] = Field(
+        description="Список ключевых технологий, языков программирования и фреймворков, которыми владеет кандидат."
+    )
+    key_achievements: str = Field(
+        description="Краткое изложение 1-2 самых значимых достижений или проектов, упомянутых в резюме.",
+        default="Ключевые достижения не указаны."
+    )
 
 
 class HHAutomizer:
+    """Класс для автоматизации откликов на hh.ru"""
     _config = get_config()
 
-    def __init__(self, resume_summary: str=None) -> None:
-        self.delete_this = None
+    def __init__(self, resume_summary: str=None, temperature: float=0.1, top_p: float=0.95, max_tokens: int = 32000) -> None:
         self.resume_summary = resume_summary
         self.count_page = 0
         self.sum_tokens = 0
+        self.model = None
+        if self._config['prefered_provider'] == "open_router":
+            self.model = ChatOpenAI(
+                model=self._config['open_router_model_name'],
+                base_url=self._config['open_router_base_url'],
+                api_key=self._config['open_router_api'],
+                temperature=temperature,
+                top_p=top_p,
+                max_completion_tokens=max_tokens,
+            )
+        elif self._config['prefered_provider'] == "giga_chat":
+            self.model = GigaChat(
+                credentials=self._config['giga_chat_api'],
+                model=self._config['giga_chat_model_name'],
+                scope="GIGACHAT_API_PERS",
+                verify_ssl_certs=False,
+                profanity=True,
+                timeout=600,
+                max_tokens=max_tokens,
+            )
 
     @classmethod
     def get_resumes(clf) -> dict:
@@ -158,54 +192,44 @@ class HHAutomizer:
                 Ты — опытный IT-рекрутер. Твоя задача — провести детальный анализ резюме и составить структурированную выжимку для нанимающего менеджера.
 
                 # КОНТЕКСТ
-                Мне нужна выжимка из резюме, которая поможет быстро оценить профессиональный уровень кандидата, его технические навыки и реальные достижения. Вся информация должна быть извлечена строго из предоставленного текста. Не додумывай и не делай предположений.
-
-                # ИНСТРУКЦИЯ
-                Проанализируй текст резюме ниже и представь результат в формате Markdown, используя следующую структуру:
+                Мне нужна подробная сводка из резюме, которая поможет оценить профессиональный уровень кандидата, его технические навыки и реальные достижения. Вся информация должна быть извлечена строго из предоставленного текста. Не додумывай и не делай предположений.
 
                 **Резюме для анализа:**
                 {resume_description}
                 ---
 
+                # ИНСТРУКЦИЯ
+                Проанализируй текст резюме ниже и представь результат в формате Markdown, используя следующую структуру:
+
                 **АНАЛИЗ РЕЗЮМЕ**
 
-                **1. Саммари (Executive Summary):**
-                -   Сформулируй краткую сводку (2-4 предложения), отвечающую на вопросы: "Кто этот кандидат?", "Какой у него ключевой опыт?" и "На какие роли он может подойти?".
-
-                **2. Опыт работы (с акцентом на достижения):**
+                **1. Опыт работы (с акцентом на достижения):**
                 -   Для каждого места работы укажи:
                     -   **Компания:** Название компании
                     -   **Должность:** Название должности
                     -   **Период:** Даты работы
                     -   **Ключевые достижения и обязанности:** Выдели 2-3 самых важных пункта. Сфокусируйся на измеримых результатах (например, "увеличил производительность на 20%", "сократил время ответа сервера на 300 мс", "разработал и внедрил систему X").
 
-                **3. Технические навыки (Hard Skills):**
+                **2. Технические навыки (Hard Skills):**
                 -   **Языки программирования:**
                 -   **Фреймворки и библиотеки:**
                 -   **Базы данных:**
                 -   **Инструменты и технологии:** [CI/CD, Docker, Kubernetes, Облачные сервисы (AWS, GCP) и т.д.]
                 -   **Методологии:** [Agile, Scrum, Kanban]
-
-                **4. Мягкие навыки (Soft Skills):**
-                -   На основе описания опыта определи и перечисли ключевые мягкие навыки (например, командная работа, менторство, решение проблем, коммуникация с бизнесом, проактивность).
-
-                **6. Образование и сертификации:**
-                *   **Образование:** [Университет, специальность, год окончания]
-                *   **Сертификаты и курсы:** [Название сертификата/курса, год получения]
                 """
             )
-            model = GigaChat(
-                credentials=self._config["giga_chat_api"],
-                scope="GIGACHAT_API_PERS",
-                verify_ssl_certs=False,
-                timeout=600,
-            )
-            structured_llm = model.with_structured_output(ResumeSummary)
+            structured_llm = self.model.with_structured_output(ResumeSummary)
             chain = prompt | structured_llm
             try:
                 response: ResumeSummary = chain.invoke({"resume_description": resume_description})
-                self.delete_this = response
-                summary_text = f"Краткое содержание:\n{response.summary}\n"
+                summary_text = (
+                    f"Краткое содержание резюме:\n"
+                    f"Опыт кандидата: {response.candidate_experience}\n"
+                    f"Места работы:\n"
+                    f"{'\n'.join(response.work_experience)}\n"
+                    f"Технологический стек: {', '.join(response.tech_stack)}\n"
+                    f"Ключевые достижения: {response.key_achievements}\n"
+                )
                 self.resume_summary = summary_text
                 with open("resume_summary.txt", "w", encoding="utf-8") as file:
                     file.write(summary_text)
@@ -241,19 +265,11 @@ class HHAutomizer:
         )
         system_prompt = "Ты — Олег, русскоязычный автоматический ассистент. Ты разговариваешь с людьми и помогаешь им. Отвечай только строго по контексту."
 
-        chat = GigaChat(
-            credentials=self._config["giga_chat_api"],
-            scope="GIGACHAT_API_PERS",
-            verify_ssl_certs=False,
-            profanity=True,
-            timeout=600,
-        )
-
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        response = chat.invoke(messages)
+        response = self.model.invoke(messages)
         self.sum_tokens += response.response_metadata["token_usage"].total_tokens
         try:
             mark = int(response.content.split("Оценка: ")[1])
@@ -275,13 +291,6 @@ class HHAutomizer:
         Returns:
             str: готовое сопроводительное письмо
         """
-        chat = GigaChat(
-            credentials=self._config["giga_chat_api"],
-            scope="GIGACHAT_API_PERS",
-            verify_ssl_certs=False,
-            profanity=True,
-            timeout=600,
-        )
         user_prompt = """
         Привет, мне нужно, чтобы сейчас мне помогал составлять сопроводительные письма в разные компании. Я хочу работать DS специалистом. 
 
@@ -311,7 +320,7 @@ class HHAutomizer:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        response = chat.invoke(messages)
+        response = self.model.invoke(messages)
         self.sum_tokens += response.response_metadata["token_usage"].total_tokens
         return response.content
 
