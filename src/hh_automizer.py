@@ -41,6 +41,14 @@ class ResumeSummary(BaseModel):
         default="Ключевые достижения не указаны."
     )
 
+class AssessingTheProximity(BaseModel):
+    """Модель валидации для оценки близости вакансии и резюме."""
+    mark: int = Field(description="Оценка того насколько подходит кандидат к вакансии от 0 до 4 включительно")
+    thoughts: str = Field(description="Письменное обоснование выбранной оценки")
+
+class CoverLetter(BaseModel):
+    letter: str = Field(description="Сопроводительное письмо, которое должно впечатлить рекрутера")
+
 
 class HHAutomizer:
     """Класс для автоматизации откликов на hh.ru"""
@@ -158,34 +166,47 @@ class HHAutomizer:
         except Exception as e:
             print(f"Ошибка для вакансии: {vacancy_id}: {e}")
             return None
+    
+    @staticmethod
+    def resume_parser( resume: dict) -> str:
+        """Метод парсинга резюме по ключам, которые передаются hh.ru.
+
+        Args:
+            resume (dict): словарь, где в ключах указаны различные детали резюме, которые предоставляются hh.ru
+
+        Returns:
+            str: строка с опытом работы, навыками и указанным набором навыков
+        """
+        experience_descriptions = []
+        for exp in resume.get("experience", []):
+            company = exp.get("company", "Не указано")
+            position = exp.get("position", "Не указано")
+            description = exp.get("description", "Нет описания")
+            experience_descriptions.append(
+                f"Компания: {company}\nДолжность: {position}\nОписание: {description}\n"
+            )
+        experience_info = (
+            "\n".join(experience_descriptions)
+            if experience_descriptions
+            else "Опыт работы не указан."
+        )
+        skills = resume.get("skills", "Навыки не указаны.")
+        skill_set = resume.get("skill_set", [])
+        skill_set_info = (
+            ", ".join(skill_set) if skill_set else "Набор навыков не указан."
+        )
+        resume_description = (
+            f"Опыт работы:\n{experience_info}\n\n"
+            f"Навыки:\n{skills}\n\n"
+            f"Набор навыков:\n{skill_set_info}"
+        )
+        return resume_description
 
     def set_resume_summary(self) -> None:
         """Устанавливает краткое описание резюме кандидата, выделяя главные особенности из его опыта."""
         if self.resume_summary is None:
             resume = self.get_resume_details()
-            experience_descriptions = []
-            for exp in resume.get("experience", []):
-                company = exp.get("company", "Не указано")
-                position = exp.get("position", "Не указано")
-                description = exp.get("description", "Нет описания")
-                experience_descriptions.append(
-                    f"Компания: {company}\nДолжность: {position}\nОписание: {description}\n"
-                )
-            experience_info = (
-                "\n".join(experience_descriptions)
-                if experience_descriptions
-                else "Опыт работы не указан."
-            )
-            skills = resume.get("skills", "Навыки не указаны.")
-            skill_set = resume.get("skill_set", [])
-            skill_set_info = (
-                ", ".join(skill_set) if skill_set else "Набор навыков не указан."
-            )
-            resume_description = (
-                f"Опыт работы:\n{experience_info}\n\n"
-                f"Навыки:\n{skills}\n\n"
-                f"Набор навыков:\n{skill_set_info}"
-            )
+            resume_description = self.resume_parser(resume)
             prompt = PromptTemplate.from_template(
                 template="""
                 # РОЛЬ
@@ -249,36 +270,37 @@ class HHAutomizer:
         """
         if self.resume_summary is None:
             raise ValueError("Резюме отсутвует. Невозможно оценить его с вакансией")
+        
+        prompt = PromptTemplate.from_template("""
+        # РОЛЬ
+        Ты - опытный IT-рекрутер с многолетним стажем. Твоя главная задача - оценить насколько кандидат по его резюме подходит к выбранной вакансии.
 
-        user_prompt = """Тебе нужно определить по 10ти бальной шкале насколько вакансия подкодит по резюме. Учти, что пользователь хочет быть DS специалистом. 
-        Ответ выдай в формате "Размышления: (твои мысли) - Оценка: (от 1 до 10). Только одно число".
-        Вакансия:
-        ====================
+        # ИНСТРУКЦИИ ПО ОЦЕНКЕ
+        Ты проводишь оценку от 0 до 4х баллов включительно. Вот критерии, которыми ты должен руководиться:
+        - 0 баллов. Вакансия не имеет отношения к сфере деятельности кандидата. К примеру, кандидат работает в IT, а вакансия продавца техники
+        - 1 балл. Полное несоответствие вакансии и резюме. Нет пересечений по стеку, либо это очень далекие пересечения, ввиду которых кандидату будет довольно сложно пройти собеседование.
+        - 2 балла. Кандидат едва подходит по вакансии. Да, шансы пройти собеседования есть, но они слишком малы. Нужно многое изучить, чтобы попасть на эту вакансию
+        - 3 балла. Кандидат имеет неплохие шансы. Довольно высокое пересечение стека и навыков между резюме и вакансией. Есть что изучить, но не так много.
+        - 4 балла. Идеальное совпадение. Стек и навыки кандидата с излишками покрывают требования вакансии, либо полностью соответствуют им. Кандидат имеет высокие шансы пройти собеседование и получить оффер.
+
+        # КОНТЕКСТ
+        Вакансия, которая предлагается кандидату:
         {vacancy}
         ====================
-        Резюме:
-        ====================
+        Резюме кандидата:
         {resume}
-        ====================
-        """.format(
-            vacancy=vac_describe, resume=self.resume_summary
-        )
-        system_prompt = "Ты — Олег, русскоязычный автоматический ассистент. Ты разговариваешь с людьми и помогаешь им. Отвечай только строго по контексту."
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        response = self.model.invoke(messages)
-        self.sum_tokens += response.response_metadata["token_usage"].total_tokens
+        """)
+        structured_llm = self.model.with_structured_output(AssessingTheProximity)
+        chain = prompt | structured_llm
         try:
-            mark = int(response.content.split("Оценка: ")[1])
-            print(f"Оценка LLM: {mark}")
-            if mark >= self._config["criterion"]["mark"]:
+            response: AssessingTheProximity = chain.invoke({"vacancy": vac_describe, "resume": self.resume_summary})
+            print(f"Оценка LLM: {response.mark}\nОбоснование оценки: {response.thoughts}")
+            if response.mark >= self._config["criterion"]["mark"]:
                 return OK
             else:
-                return BAD
-        except:
+                BAD
+        except Exception as e:
+            print(f"Ошибка во время оценки сходимости резюме и вакансии: {e}")
             return ERROR
 
     def create_cover_letter(self, vac_name: str, vac_description: str) -> str:
@@ -369,7 +391,7 @@ class HHAutomizer:
             self.count_page += 1
             if len(similar_vacancies) > 0:
                 for vacancy in similar_vacancies["items"]:
-                    time.sleep(0.5)
+                    time.sleep(0.5) # hardcoded. Введено из-за ограничения API hh.ru на количество запросов в секунду
                     vacancy_id = vacancy["id"]
                     vacancy_details = self.get_vacancy_details(vacancy_id)
                     if vacancy_details:
