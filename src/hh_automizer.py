@@ -46,10 +46,6 @@ class AssessingTheProximity(BaseModel):
     mark: int = Field(description="Оценка того насколько подходит кандидат к вакансии от 0 до 4 включительно")
     thoughts: str = Field(description="Письменное обоснование выбранной оценки")
 
-class CoverLetter(BaseModel):
-    letter: str = Field(description="Сопроводительное письмо, которое должно впечатлить рекрутера")
-
-
 class HHAutomizer:
     """Класс для автоматизации откликов на hh.ru"""
     _config = get_config()
@@ -168,7 +164,7 @@ class HHAutomizer:
             return None
     
     @staticmethod
-    def resume_parser( resume: dict) -> str:
+    def resume_parser(resume: dict) -> str:
         """Метод парсинга резюме по ключам, которые передаются hh.ru.
 
         Args:
@@ -260,13 +256,13 @@ class HHAutomizer:
                 self.resume_summary = None
 
     def get_mark_resume_vac(self, vac_describe: str) -> int:
-        """Производит оценку между резюме и вакансией.
+        """Метод для оценки подходит ли резюме по описанию вакансии.
 
         Args:
             vac_describe (str): текстовое описание вакансии
         
         Returns:
-            int: оценка между резюме и вакансией
+            int: ERROR - ошибка, BAD - не подходит, OK - подходит
         """
         if self.resume_summary is None:
             raise ValueError("Резюме отсутвует. Невозможно оценить его с вакансией")
@@ -303,7 +299,7 @@ class HHAutomizer:
             print(f"Ошибка во время оценки сходимости резюме и вакансии: {e}")
             return ERROR
 
-    def create_cover_letter(self, vac_name: str, vac_description: str) -> str:
+    def create_cover_letter(self, vacancy_name: str, vacancy_description: str) -> str:
         """Создает сопроводиельное письмо.
         
         Args:
@@ -313,38 +309,57 @@ class HHAutomizer:
         Returns:
             str: готовое сопроводительное письмо
         """
-        user_prompt = """
-        Привет, мне нужно, чтобы сейчас мне помогал составлять сопроводительные письма в разные компании. Я хочу работать DS специалистом. 
+        prompt = PromptTemplate.from_template(template="""
+        # РОЛЬ
+        Ты - опытный IT-рекрутер с многолетним стажем. Твоя главная задача - составить хорошее сопроводительное письмо, исходя из резюме кандидата и выбранной вакансии.
+        Однако это не письмо на почту, а сообщение в чат в приложение по типу Linkedin, тем не менее оно должно быть официальным, но не нужно формальностей по типу "от кого" и "кому"
 
-        В следующем тексте есть пропущенные поля, обозначенные _ и _. Также в этих подчеркиваниях есть инструкция что нужно вставить. Твоя задача написать мне сопроводительное письмо с заполненными полями. В ответе нужно выдать только само письмо
-        Шаблон:
-        Добрый день,
+        # Инструкции
+        0. Обязательно представься от имени кандидата и укажи на какую позицию хочет кандидат
+        1. Учти, что обязательно нужно описать, какие технологии помогут кандидату на его новом месте, исходя из требований вакансии
+        2. Отметь опыт, который есть у кандидата для данной вакансии. Именно практический опыт. К примеру, разработал модель машинного обучения, которая увеличила точность прогнозирования на 25%. Опыт ты должен брать из резюме кандидата
+        3. Отметь, какой стимул имеет кандидат, чтобы начать работу именно в этой компании. Тут важно показать, что кандидат изучил продукты кампании, ценности и проекты
+        4. В конце поблагодари за внимание и вырази готовность кандидата к собеседованию, передав нужные контакты
+        5. Письмо не должно быть длинным. Важно, чтобы его можно было прочесть за 10-20 секунд
+        6. В конце нужно указать контакты кандидаты для обратной связи.
+        7. Не нужно указывать точный технологический стек кандидата. Ты можешь упоминать общие технологии по типу: ML, RAG, MCP и т.д., но средства реализации по типу Langchain, XGBoost указывать не стоит
 
-        Меня зовут Иван, я работаю в сфере Data Science уже 1.5 года и хотел бы предложить свою кандидатуру на вашу позицию {vacancy_name}.
-
-        Последнее время я активно занимаюсь применением LLM-моделей в IT-решениях: создаю ботов, которые упрощают жизнь пользователей, настраиваю RAG-пайплайны и разрабатываю AI-агентов.
-
-        _тут 2-3 предложения почему я хочу работать в этой компании_
-
-        Буду рад обсудить детали вакансии и ответить на ваши вопросы. Со мной можно связаться в Telegram @Ivan или по почте ivan.ivanov@vanya.ru.
-
-        С уважением,
-        Иван
+        # Контекст
         Текст вакансии:
         =========================
+        Название вакансии: {vacancy_name}
         {vacancy_description}
-        """.format(
-            vacancy_name=vac_name, vacancy_description=vac_description
-        )
 
-        system_prompt = "Ты — Олег, русскоязычный автоматический ассистент. Ты разговариваешь с людьми и помогаешь им. Отвечай только строго по контексту."
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        response = self.model.invoke(messages)
-        self.sum_tokens += response.response_metadata["token_usage"].total_tokens
-        return response.content
+        Текст резюме кандидата:
+        =========================
+        {resume_description}
+
+        Контакты кандидата:
+        =========================
+        - Имя: {name}
+        - Телеграм: @{telegram}
+        - Почта: {email}
+
+        # Структура ответа
+        В качестве ответа выдай только составленное сопроводительное письмо, учтя все инструкции, которые были переданы
+        """
+        )
+        chain = prompt | self.model
+
+        try:
+            response = chain.invoke({
+                "vacancy_description": vacancy_description,
+                "vacancy_name": vacancy_name,
+                "resume_description": self.resume_summary,
+                "name": self._config['candidate']['name'],
+                "telegram": self._config['candidate']['telegram'],
+                "email": self._config['candidate']['email']
+            })
+            self.sum_tokens += response.usage_metadata['total_tokens']
+            return response.content
+        except Exception as e:
+            print(f"Ошибка во время формирования сопроводительного письма. Текст ошибки: {e}")
+            return None
 
     def apply_to_vacancy(self, vacancy_id: str, cover_letter: str) -> None:
         """Отправляет отклик на вакансию.
@@ -419,9 +434,14 @@ class HHAutomizer:
                                     vac_name, vac_description_clear
                                 )
                                 time.sleep(0.5)
-                                self.apply_to_vacancy(vacancy_id, cover_letter)
-                                done_responses += 1
-                                print("-" * 40)
+                                if isinstance(cover_letter, str):
+                                    print(f"Сопроводительное письмо:\n{cover_letter}")
+                                    self.apply_to_vacancy(vacancy_id, cover_letter)
+                                    done_responses += 1
+                                    print("-" * 40)
+                                else:
+                                    print(f"Не удалось составить сопроводительное письмо. Вакансия {vac_name}. ID вакансии: {vacancy_id}")
+                                    print("-" * 40)
                             elif mark == BAD:
                                 print(
                                     f"Вакансия {vac_name} не подходит по требованиям. ID вакансии: {vacancy_id}"
